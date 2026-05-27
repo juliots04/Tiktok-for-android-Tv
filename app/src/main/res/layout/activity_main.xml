@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <WebView
+        android:id="@+id/webView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
+        android:nextFocusDown="@id/webView"
+        android:nextFocusUp="@id/webView"
+        android:nextFocusLeft="@id/webView"
+        android:nextFocusRight="@id/webView" />
+
+    <!-- Loading overlay -->
+    <FrameLayout
+        android:id="@+id/loadingOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/black"
+        android:visibility="visible">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:clipChildren="false"
+            android:clipToPadding="false">
+
+            <!-- Logo gigante y pegado a los puntos -->
+            <ImageView
+                android:id="@+id/loadingLogo"
+                android:layout_width="750dp"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:scaleType="fitCenter"
+                android:contentDescription="TikTok"
+                android:src="@drawable/loading_logo"
+                android:layout_marginBottom="0dp" />
+
+            <!-- Contenedor con margen NEGATIVO para subirlo hasta el logo -->
+            <LinearLayout
+                android:id="@+id/dotsContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:layout_marginTop="-60dp"
+                android:paddingStart="40dp"
+                android:paddingEnd="40dp"
+                android:clipChildren="false"
+                android:clipToPadding="false">
+
+                <View
+                    android:id="@+id/dotRed"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/dot_red" />
+
+                <View
+                    android:id="@+id/dotCyan"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:background="@drawable/dot_cyan" />
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Error/Retry overlay -->
+    <LinearLayout
+        android:id="@+id/errorOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/tiktok_dark"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="😕"
+            android:textSize="48sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Sin conexión a Internet"
+            android:textColor="@color/tiktok_white"
+            android:textSize="20sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Verifica tu conexión y presiona OK para reintentar"
+            android:textColor="@color/tiktok_gray"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/retryButton"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginTop="24dp"
+            android:background="@color/tiktok_red"
+            android:focusable="true"
+            android:paddingStart="32dp"
+            android:paddingEnd="32dp"
+            android:text="Reintentar"
+            android:textColor="@color/tiktok_white"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+</FrameLayout>

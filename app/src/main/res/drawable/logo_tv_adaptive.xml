@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Fondo sólido para que no sea transparente y se vea mejor en el círculo -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#000000" />
+        </shape>
+    </item>
+    
+    <!-- El logo del gato centrado y con mucho margen para que el círculo no lo corte -->
+    <item
+        android:drawable="@drawable/logo_tv"
+        android:gravity="center"
+        android:top="80dp"
+        android:bottom="80dp"
+        android:left="80dp"
+        android:right="80dp" />
+</layer-list>
