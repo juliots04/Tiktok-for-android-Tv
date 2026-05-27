@@ -99,4 +99,4 @@ adb pull /sdcard/Android/data/com.example.tiktokxsleppify/files/dom_dump.html
 
 ---
 
-Creado con ❤️ por [juliots21](https://github.com/juliots21)
+Creado con ❤️ por [juliots04](https://github.com/juliots04)
