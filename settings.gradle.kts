@@ -23,6 +23,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TikTok x Sleppify"
+rootProject.name = "TikTok TV"
 include(":app")
  

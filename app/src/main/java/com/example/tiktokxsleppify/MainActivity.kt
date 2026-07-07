@@ -205,6 +205,9 @@ class MainActivity : AppCompatActivity() {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) { safeBrowsingEnabled = false }
             setGeolocationEnabled(false)
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            
+            // Optimizaciones adicionales para Android TV
+            offscreenPreRaster = true
         }
 
         WebView.setWebContentsDebuggingEnabled(true)
@@ -216,6 +219,28 @@ class MainActivity : AppCompatActivity() {
 
         webView.webViewClient = object : WebViewClient() {
             
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                val url = request?.url ?: return null
+                val host = url.host ?: return null
+                
+                // Bloquear dominios de publicidad, analíticas y telemetría pesada
+                if (host.contains("analytics.tiktok.com") ||
+                    host.contains("mon.tiktok.com") ||
+                    host.contains("mcs.tiktok.com") ||
+                    host.contains("stat.tiktok.com") ||
+                    host.contains("log.tiktok.com") ||
+                    host.contains("doubleclick") ||
+                    host.contains("google-analytics.com") ||
+                    host.contains("googletagmanager") ||
+                    host.contains("googlesyndication") ||
+                    host.contains("facebook.net") ||
+                    (host.contains("facebook.com") && url.path?.contains("sdk") == true)
+                ) {
+                    return WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream("".toByteArray()))
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
                 

@@ -4,11 +4,55 @@
     if (window.__TKTV_LOADED__) return;
     window.__TKTV_LOADED__ = true;
 
-    // Inject Layout Shield for Video Constraints
+    // --- AV1 CODEC DISABLE (FORCES H.264 HARDWARE ACCELERATED DECODING) ---
+    try {
+        var originalIsTypeSupported = window.MediaSource && window.MediaSource.isTypeSupported;
+        if (originalIsTypeSupported) {
+            window.MediaSource.isTypeSupported = function (type) {
+                if (type && (type.toLowerCase().includes('av01') || type.toLowerCase().includes('av1'))) {
+                    return false;
+                }
+                return originalIsTypeSupported.call(window.MediaSource, type);
+            };
+        }
+        var originalCanPlayType = window.HTMLMediaElement && window.HTMLMediaElement.prototype.canPlayType;
+        if (originalCanPlayType) {
+            window.HTMLMediaElement.prototype.canPlayType = function (type) {
+                if (type && (type.toLowerCase().includes('av01') || type.toLowerCase().includes('av1'))) {
+                    return '';
+                }
+                return originalCanPlayType.call(this, type);
+            };
+        }
+        if (window.navigator && window.navigator.mediaCapabilities && window.navigator.mediaCapabilities.decodingInfo) {
+            var originalDecodingInfo = window.navigator.mediaCapabilities.decodingInfo;
+            window.navigator.mediaCapabilities.decodingInfo = function (configuration) {
+                if (configuration && configuration.video) {
+                    var contentType = configuration.video.contentType || '';
+                    if (contentType.toLowerCase().includes('av01') || contentType.toLowerCase().includes('av1')) {
+                        return Promise.resolve({
+                            supported: false,
+                            smooth: false,
+                            powerEfficient: false
+                        });
+                    }
+                }
+                return originalDecodingInfo.call(window.navigator.mediaCapabilities, configuration);
+            };
+        }
+    } catch (e) { }
+
+    // Inject Layout Shield for Video Constraints and GPU Performance
     try {
         var style = document.createElement('style');
         style.id = 'tktv-layout-shield';
         style.innerHTML = `
+            /* GPU Optimization: Remove expensive CSS shadow calculations */
+            * {
+                box-shadow: none !important;
+                text-shadow: none !important;
+            }
+
             /* Core Fix: Force feed items to max 100vh height to fix TV Canvas stretching */
             section[data-e2e="feed-video"] {
                 max-height: 100vh !important;
@@ -16,6 +60,8 @@
                 justify-content: center !important;
                 align-items: center !important;
                 overflow: hidden !important;
+                transform: translateZ(0) !important;
+                backface-visibility: hidden !important;
             }
             /* Restaurar mecanismo de Canvas para respetar la UI de PC sin asfixiar la caja */
             section[data-e2e="feed-video"] canvas {
@@ -45,17 +91,17 @@
                 border-radius: 0 !important;
             }
             
-
             /* Video Estricto proporcional dentro del bounds (Contain, JAMÁS cover) */
             video {
                 max-height: 100vh !important;
                 object-fit: contain !important; 
                 border-radius: 0 !important;
-                transform: translateZ(0); 
+                transform: translateZ(0) !important;
+                backface-visibility: hidden !important;
             }
         `;
         document.head.appendChild(style);
-    } catch (e) { }
+    } catch (e) { }}
 
     function sendKey(key, code, charCode) {
         try {
