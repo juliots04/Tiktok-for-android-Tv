@@ -1,6 +1,7 @@
 package com.example.tiktokxsleppify
 
 import android.annotation.SuppressLint
+import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -14,8 +15,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.animation.ObjectAnimator
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.webkit.*
 import android.widget.Button
 import android.widget.FrameLayout
@@ -31,15 +30,27 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private var googleLoginWebView: WebView? = null  // WebView separado para login de Google
     private lateinit var loadingOverlay: FrameLayout
-    private lateinit var dotRed: View
-    private lateinit var dotCyan: View
     private lateinit var errorOverlay: LinearLayout
     private lateinit var retryButton: Button
     private var preloadedBridgeScript: String = ""
 
+    // --- Bloqueo de telemetría/ads para acelerar el arranque en hardware débil ---
+    // Recorta peticiones de red y trabajo JS que no afectan al feed.
+    // ⚠️ Si el feed dejara de cargar, pon blockTrackers = false.
+    private val blockTrackers = true
+    private val blockedHosts = listOf(
+        "google-analytics.com", "googletagmanager", "doubleclick",
+        "googlesyndication", "scorecardresearch.com", "facebook.net",
+        "analytics.tiktok.com", "mon.tiktok.com", "mcs.tiktok.com", "stat.tiktok.com", "log.tiktok.com",
+        "mon.tiktokv.com", "mon-va.tiktokv.com", "mcs.tiktokv.com", "mcs-va.tiktokv.com",
+        "log.tiktokv.com", "log-va.tiktokv.com"
+    )
+
     // Virtual Mouse State
     private var isVMEnabled = false
     private var vmView: View? = null
+    private var vmHotspotX = 0f // desfase del punto de click respecto a la esquina de la vista
+    private var vmHotspotY = 0f
     private var vmX = 960f // center of 1080p
     private var vmY = 540f
     private var isVmHoldingOk = false
@@ -50,9 +61,9 @@ class MainActivity : AppCompatActivity() {
     private var vmVy = 0f
     private var vmAccX = 0f
     private var vmAccY = 0f
-    private val vmMaxSpeed = 22f // Tope más controlado
-    private val vmAcceleration = 1.2f // Aceleración muy suave para precisión
-    private val vmFriction = 0.8f // Fricción interna
+    private val vmMaxSpeed = 26f // Cruza 1080p en ~1.2s, controlable
+    private val vmAcceleration = 1.6f // Respuesta viva sin ser brusca
+    private val vmFriction = 0.82f // Inercia estilo LG: deslizamiento ~120px tras soltar
 
     private var touchDownTime = 0L
 
@@ -75,8 +86,12 @@ class MainActivity : AppCompatActivity() {
                 vmVx = vmVx.coerceIn(-vmMaxSpeed, vmMaxSpeed)
                 vmVy = vmVy.coerceIn(-vmMaxSpeed, vmMaxSpeed)
 
+                // Zona muerta: sin aceleración, asienta la velocidad residual a cero (no repta sub-pixel)
+                if (vmAccX == 0f && Math.abs(vmVx) < 0.4f) vmVx = 0f
+                if (vmAccY == 0f && Math.abs(vmVy) < 0.4f) vmVy = 0f
+
                 // Renderizar y aplicar límites con reseteo de velocidad en colisión
-                if (Math.abs(vmVx) > 0.1f || Math.abs(vmVy) > 0.1f) {
+                if (Math.abs(vmVx) > 0.4f || Math.abs(vmVy) > 0.4f) {
                     val nextX = vmX + vmVx
                     val nextY = vmY + vmVy
                     
@@ -96,8 +111,8 @@ class MainActivity : AppCompatActivity() {
                         vmY = nextY
                     }
 
-                    vmView?.translationX = vmX
-                    vmView?.translationY = vmY
+                    vmView?.translationX = vmX - vmHotspotX
+                    vmView?.translationY = vmY - vmHotspotY
 
                     if (isVmHoldingOk) {
                         dispatchNativeTouch(MotionEvent.ACTION_MOVE)
@@ -131,9 +146,6 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webView)
         loadingOverlay = findViewById(R.id.loadingOverlay)
-        dotRed = findViewById(R.id.dotRed)
-        dotCyan = findViewById(R.id.dotCyan)
-        startDotsAnimation()
         errorOverlay = findViewById(R.id.errorOverlay)
         retryButton = findViewById(R.id.retryButton)
 
@@ -146,23 +158,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.loadUrl(TIKTOK_URL)
-    }
-
-    private fun startDotsAnimation() {
-        val animRed = ObjectAnimator.ofFloat(dotRed, "translationX", -15f, 15f)
-        animRed.duration = 600
-        animRed.repeatCount = ObjectAnimator.INFINITE
-        animRed.repeatMode = ObjectAnimator.REVERSE
-        animRed.interpolator = AccelerateDecelerateInterpolator()
-
-        val animCyan = ObjectAnimator.ofFloat(dotCyan, "translationX", 15f, -15f)
-        animCyan.duration = 600
-        animCyan.repeatCount = ObjectAnimator.INFINITE
-        animCyan.repeatMode = ObjectAnimator.REVERSE
-        animCyan.interpolator = AccelerateDecelerateInterpolator()
-
-        animRed.start()
-        animCyan.start()
     }
 
     private fun setupFullscreen() {
@@ -179,7 +174,12 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        // EXPERIMENTO RENDIMIENTO: el manifest ya tiene hardwareAccelerated=true, así que el WebView
+        // usa el compositor GPU de Chromium. Forzar una capa de hardware sobre TODO el WebView obligaba
+        // a re-subir una textura del tamaño de la pantalla en cada frame del feed (GPU Mali débil).
+        // LAYER_TYPE_NONE mantiene la aceleración por GPU sin esa penalización.
+        // ⚠️ Si el VIDEO se pusiera EN NEGRO en la Xiaomi, revertir esta línea a LAYER_TYPE_HARDWARE.
+        webView.setLayerType(View.LAYER_TYPE_NONE, null)
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -195,6 +195,9 @@ class MainActivity : AppCompatActivity() {
             // Restore WideViewport so Desktop layout has enough logical width (fixes left bar clipping)
             useWideViewPort = true
             loadWithOverviewMode = true
+
+            // Optimización adicional para Android TV: mantiene el raster listo (menos parpadeo)
+            offscreenPreRaster = true
             
             setSupportZoom(false)
             builtInZoomControls = false
@@ -205,38 +208,26 @@ class MainActivity : AppCompatActivity() {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) { safeBrowsingEnabled = false }
             setGeolocationEnabled(false)
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            
-            // Optimizaciones adicionales para Android TV
-            offscreenPreRaster = true
         }
 
-        WebView.setWebContentsDebuggingEnabled(true)
-        webView.addJavascriptInterface(AndroidHost(), "AndroidHost")
+        // Solo exponer el socket de depuración en builds debug (seguridad + sin overhead en producción)
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
 
         webView.isFocusable = true
         webView.isFocusableInTouchMode = true
         webView.requestFocus()
 
         webView.webViewClient = object : WebViewClient() {
-            
+
+            // Corta telemetría/ads antes de que peguen a la red: arranque más ligero.
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                val url = request?.url ?: return null
-                val host = url.host ?: return null
-                
-                // Bloquear dominios de publicidad, analíticas y telemetría pesada
-                if (host.contains("analytics.tiktok.com") ||
-                    host.contains("mon.tiktok.com") ||
-                    host.contains("mcs.tiktok.com") ||
-                    host.contains("stat.tiktok.com") ||
-                    host.contains("log.tiktok.com") ||
-                    host.contains("doubleclick") ||
-                    host.contains("google-analytics.com") ||
-                    host.contains("googletagmanager") ||
-                    host.contains("googlesyndication") ||
-                    host.contains("facebook.net") ||
-                    (host.contains("facebook.com") && url.path?.contains("sdk") == true)
-                ) {
-                    return WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream("".toByteArray()))
+                if (blockTrackers) {
+                    val host = request?.url?.host ?: ""
+                    if (host.isNotEmpty() && blockedHosts.any { host.contains(it) }) {
+                        return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                    }
                 }
                 return super.shouldInterceptRequest(view, request)
             }
@@ -299,20 +290,32 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
 
+                // FIX RECORTE/"detecta como celular": el código anterior hacía document.head.appendChild
+                // en onPageStarted, pero ahí el head suele ser null -> el try/catch lo tragaba y el
+                // viewport 1280 NUNCA se aplicaba, así que TikTok caía en su layout angosto (~960px) con
+                // el video recortado (cover). Esta versión es head-safe, BORRA el viewport de TikTok y
+                // fuerza uno solo (width=1280 -> 1280x720 = 16:9, overview mode lo ajusta sin recortar).
                 val antiTouchScript = """
                     (function() {
                         try {
-                            // Spoof pure PC
-                            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-                            Object.defineProperty(navigator, 'msMaxTouchPoints', { get: () => 0 });
-                            if ('ontouchstart' in window) delete window.ontouchstart;
-                            
-                            // Forzar Viewport Ancho de Escritorio para que la UI no se colapse en pantallas de baja densidad
-                            var meta = document.createElement('meta');
-                            meta.name = 'viewport';
-                            meta.content = 'width=1280, initial-scale=1';
-                            document.head.appendChild(meta);
+                            Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: function () { return 0; } });
+                            Object.defineProperty(navigator, 'msMaxTouchPoints', { configurable: true, get: function () { return 0; } });
+                            if ('ontouchstart' in window) { try { delete window.ontouchstart; } catch (e) {} }
                         } catch (e) {}
+                        function forceVP() {
+                            try {
+                                var head = document.head || document.getElementsByTagName('head')[0] || document.documentElement;
+                                if (!head) return;
+                                var old = document.querySelectorAll('meta[name="viewport"]');
+                                for (var i = 0; i < old.length; i++) { if (old[i].parentNode) old[i].parentNode.removeChild(old[i]); }
+                                var m = document.createElement('meta');
+                                m.name = 'viewport';
+                                m.content = 'width=1280';
+                                head.appendChild(m);
+                            } catch (e) {}
+                        }
+                        forceVP();
+                        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', forceVP, { once: true });
                     })();
                 """.trimIndent()
                 view?.evaluateJavascript(antiTouchScript, null)
@@ -321,7 +324,8 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 injectBridge()
-                webView.postDelayed({ loadingOverlay.visibility = View.GONE }, 1000)
+                // Mantener la carga hasta que un video esté realmente listo (o tope de seguridad)
+                webView.postDelayed({ hideLoadingWhenReady(0) }, 800)
             }
             
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
@@ -374,6 +378,21 @@ class MainActivity : AppCompatActivity() {
         googleLoginWebView = null
     }
 
+    private fun hideLoadingWhenReady(attempt: Int) {
+        if (loadingOverlay.visibility != View.VISIBLE) return
+        // Oculta la pantalla de carga solo cuando ya hay un video con datos (o al llegar al tope)
+        webView.evaluateJavascript(
+            "(function(){var v=document.querySelector('video');return (v && v.readyState>=2 && v.videoWidth>0)?'ready':'wait';})()"
+        ) { result ->
+            val ready = result != null && result.contains("ready")
+            if (ready || attempt >= 14) { // tope ~ 800ms + 14*500ms ≈ 7.8s
+                loadingOverlay.visibility = View.GONE
+            } else {
+                webView.postDelayed({ hideLoadingWhenReady(attempt + 1) }, 500)
+            }
+        }
+    }
+
     private fun injectBridge() {
         if (preloadedBridgeScript.isEmpty()) return
         try {
@@ -396,8 +415,8 @@ class MainActivity : AppCompatActivity() {
             vmX = webView.width / 2f
             vmY = webView.height / 2f
             vmView?.visibility = View.VISIBLE
-            vmView?.translationX = vmX
-            vmView?.translationY = vmY
+            vmView?.translationX = vmX - vmHotspotX
+            vmView?.translationY = vmY - vmHotspotY
             vmHandler.post(vMLoop)
         } else {
             vmView?.visibility = View.GONE
@@ -416,41 +435,52 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupVMViewIfNeeded() {
         if (vmView == null) {
-            val size = 50 // LG Magic Remote scale
+            // Tamaño escalado al panel (no 50px fijos): ~59px @1080p, tope para paneles 4K
+            val size = (resources.displayMetrics.heightPixels * 0.055f).toInt().coerceIn(56, 110)
+            // Hotspot = punta del pin (arriba-izquierda) = esquina (0,0) de la vista
+            vmHotspotX = 0f
+            vmHotspotY = 0f
             vmView = object : View(this) {
-                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.parseColor("#FA1859") // LG Pink
+                // Pin de mapa magenta apuntando ARRIBA-IZQUIERDA (sin fantasma cian, sin borde blanco)
+                private val body = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#FE2C55")
                     style = android.graphics.Paint.Style.FILL
-                    setShadowLayer(8f, 0f, 4f, Color.parseColor("#80000000"))
+                    setShadowLayer(size * 0.10f, 0f, size * 0.05f, Color.parseColor("#66000000"))
                 }
-                val path = android.graphics.Path()
+                // Agujerito central (efecto anillo del pin)
+                private val hole = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#40000000")
+                    style = android.graphics.Paint.Style.FILL
+                }
+                private val path = android.graphics.Path()
+                private val tri = android.graphics.Path()
+
+                private fun buildPin(w: Float) {
+                    val bcx = w * 0.53f
+                    val bcy = w * 0.53f
+                    val bR = w * 0.42f
+                    path.reset()
+                    path.addCircle(bcx, bcy, bR, android.graphics.Path.Direction.CW)
+                    tri.reset()
+                    tri.moveTo(0f, 0f) // PUNTA arriba-izquierda = hotspot exacto
+                    tri.lineTo(bcx - bR * 0.28f, bcy - bR * 0.88f)
+                    tri.lineTo(bcx - bR * 0.88f, bcy - bR * 0.28f)
+                    tri.close()
+                    path.op(tri, android.graphics.Path.Op.UNION)
+                }
 
                 override fun onDraw(canvas: android.graphics.Canvas) {
                     super.onDraw(canvas)
                     val w = width.toFloat()
-                    val h = height.toFloat()
-                    
-                    val cx = w * 0.55f
-                    val cy = h * 0.55f
-                    val radius = w * 0.35f
-                    
-                    path.reset()
-                    // Cuerpo circular
-                    path.addCircle(cx, cy, radius, android.graphics.Path.Direction.CW)
-                    
-                    // Deformar hacia una punta triangular gruesa integrada
-                    val arrow = android.graphics.Path()
-                    arrow.moveTo(w * 0.15f, h * 0.15f) // Punta
-                    arrow.lineTo(cx + radius * 0.6f, cy - radius * 0.5f) // Lateral superior (más abierto/grueso)
-                    arrow.lineTo(cx - radius * 0.5f, cy + radius * 0.6f) // Lateral inferior (más abierto/grueso)
-                    arrow.close()
-                    
-                    path.op(arrow, android.graphics.Path.Op.UNION)
-                    canvas.drawPath(path, paint)
+                    buildPin(w)
+                    canvas.drawPath(path, body)
+                    canvas.drawCircle(w * 0.53f, w * 0.53f, w * 0.15f, hole)
                 }
             }.apply {
                 layoutParams = FrameLayout.LayoutParams(size, size)
                 elevation = 100f
+                // Capa software: garantiza que setShadowLayer dibuje la sombra
+                setLayerType(View.LAYER_TYPE_SOFTWARE, null)
             }
             val root = findViewById<View>(android.R.id.content) as? FrameLayout
             root?.addView(vmView)
@@ -464,6 +494,19 @@ class MainActivity : AppCompatActivity() {
         event.source = InputDevice.SOURCE_TOUCHSCREEN
         webView.dispatchTouchEvent(event)
         event.recycle()
+    }
+
+    private fun handleBack() {
+        // La SPA cierra lo que tenga abierto (sidebar, modal, la X del modal, Escape).
+        // Si de verdad no hay nada que cerrar, sale de la app.
+        webView.evaluateJavascript(
+            "if(window.TikTokTV && window.TikTokTV.back) { window.TikTokTV.back(); } else { 'nav_back'; }"
+        ) { result ->
+            val handled = result != null && result != "\"nav_back\"" && result != "null"
+            if (!handled) {
+                if (webView.canGoBack()) webView.goBack() else finish()
+            }
+        }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -503,11 +546,7 @@ class MainActivity : AppCompatActivity() {
                         vmHandler.removeCallbacks(okLongPressRunnable)
                     }
                     KeyEvent.KEYCODE_BACK -> {
-                        webView.evaluateJavascript("if(window.TikTokTV && window.TikTokTV.back) { window.TikTokTV.back(); } else { 'nav_back'; }") { result ->
-                            if (result == "\"nav_back\"" || result == "null") {
-                                if (webView.canGoBack()) webView.goBack() else finish()
-                            }
-                        }
+                        handleBack()
                     }
                 }
                 return true
@@ -519,11 +558,7 @@ class MainActivity : AppCompatActivity() {
                 KeyEvent.KEYCODE_DPAD_RIGHT -> { sendBridgeCommand("enterSidebar"); return true }
                 KeyEvent.KEYCODE_DPAD_LEFT -> { sendBridgeCommand("exitSidebar"); return true }
                 KeyEvent.KEYCODE_BACK -> {
-                    webView.evaluateJavascript("if(window.TikTokTV && window.TikTokTV.back) { window.TikTokTV.back(); } else { 'nav_back'; }") { result ->
-                        if (result == "\"nav_back\"" || result == "null") {
-                            if (webView.canGoBack()) webView.goBack() else finish()
-                        }
-                    }
+                    handleBack()
                     return true
                 }
             }
@@ -549,12 +584,10 @@ class MainActivity : AppCompatActivity() {
             if (isVMEnabled) {
                 when (keyCode) {
                     KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
-                        vmAccY = 0f
-                        vmVy = 0f // Freno en seco al soltar
+                        vmAccY = 0f // sin vmVy=0f: deja que la fricción lo deslice suave (estilo LG)
                     }
                     KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                        vmAccX = 0f
-                        vmVx = 0f // Freno en seco al soltar
+                        vmAccX = 0f // sin vmVx=0f: glide con inercia en vez de freno en seco
                     }
                 }
                 return true
@@ -595,18 +628,5 @@ class MainActivity : AppCompatActivity() {
             return
         }
         super.onBackPressed()
-    }
-
-    inner class AndroidHost {
-        @JavascriptInterface
-        fun saveDOM(html: String) {
-            try {
-                val file = java.io.File(getExternalFilesDir(null), "dom_dump.html")
-                file.writeText(html)
-                android.util.Log.d("TikTokTV", "DOM SAVED TO " + file.absolutePath)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
     }
 }

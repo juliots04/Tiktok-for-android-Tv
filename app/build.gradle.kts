@@ -10,8 +10,8 @@ android {
         applicationId = "com.example.tiktokxsleppify"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.15"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {
